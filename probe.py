@@ -15,6 +15,7 @@ import torch
 import torch.nn as nn
 from sklearn.metrics import f1_score
 from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
 
 
 class HallucinationProbe(nn.Module):
@@ -23,12 +24,16 @@ class HallucinationProbe(nn.Module):
     Extends ``torch.nn.Module``; the default architecture is a single
     hidden-layer MLP with ``StandardScaler`` pre-processing.  The network is
     built lazily in ``fit()`` once the feature dimension is known.
+
+    Uses PCA inside to compress the feature space, then trains a small MLP on
+    the reduced representation.
     """
 
     def __init__(self) -> None:
         super().__init__()
         self._net: nn.Sequential | None = None  # built lazily in fit()
         self._scaler = StandardScaler()
+        self._pca: PCA | None = None
         self._threshold: float = 0.5  # tuned by fit_hyperparameters()
 
     # ------------------------------------------------------------------
@@ -80,6 +85,15 @@ class HallucinationProbe(nn.Module):
             ``self`` (for method chaining).
         """
         X_scaled = self._scaler.fit_transform(X)
+
+        n_components = min(X_scaled.shape[1], 100)
+        self._pca = PCA(
+            n_components=n_components,
+            whiten=True,
+            random_state=42
+        )
+        
+        X_reduced = self._pca.fit_transform(X_scaled)
 
         self._build_network(X_scaled.shape[1])
 

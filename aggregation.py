@@ -18,7 +18,7 @@ single entry point called from the notebook.
 from __future__ import annotations
 
 import torch
-
+import numpy as np
 
 def aggregate(
     hidden_states: torch.Tensor,
@@ -37,24 +37,46 @@ def aggregate(
         A 1-D feature tensor of shape ``(hidden_dim,)`` or
         ``(k * hidden_dim,)`` if multiple layers are concatenated.
 
-    Student task:
-        Replace or extend the skeleton below with alternative layer selection,
-        token pooling (mean, max, weighted), or multi-layer fusion strategies.
     """
-    # ------------------------------------------------------------------
-    # STUDENT: Replace or extend the aggregation below.
-    # ------------------------------------------------------------------
 
-    # Default: last real token of the final transformer layer.
-    layer = hidden_states[-1]          # (seq_len, hidden_dim)
+    # from tensors to numoy arrays
+    if isinstance(hidden_states, torch.Tensor):
+        hidden_states = hidden_states.cpu().numpy()
+    if isinstance(attention_mask, torch.Tensor):
+        attention_mask = attention_mask.cpu().numpy()
 
-    # Find the index of the last real (non-padding) token.
-    real_positions = attention_mask.nonzero(as_tuple=False)  # (n_real, 1)
-    last_pos = int(real_positions[-1].item())                 # scalar index
+    # if batch, extract first 
+    if hidden_states.ndim == 4:
+        hidden_states = hidden_states[0]  # (n_layers, seq_len, hidden_dim)
+    if attention_mask.ndim == 2:
+        attention_mask = attention_mask[0]  # (seq_len,)
 
-    feature = layer[last_pos]          # (hidden_dim,)
+    n_layers, seq_len, hidden_dim = hidden_states.shape
+    assert attention_mask.shape == (seq_len,), f"attention_mask shape {attention_mask.shape} != (n_layers,)"
 
-    return feature
+    # 1. Mean for real tokens
+    mask = attention_mask.astype(np.float32)  # (seq_len, )
+    mask_sum = np.sum(mask, axis=0)
+    if mask_sum == 0:
+        mask_sum = 1.0
+
+    # Mean over tokens for each layer
+    layer_features = []
+    for l in range(n_layers):
+        h = hidden_states[l]  # (seq_len, hidden_dim)
+        weighted_h = h * mask[:, None]  # (seq_len, hidden_dim)
+        mean_h = np.sum(weighted_h, axis=0) / mask_sum  # (hidden_dim,)
+        layer_features.append(mean_h)
+
+    layer_features = np.array(layer_features)  # (n_layers, hidden_dim)
+
+
+    scores = np.linalg.norm(layer_features, axis=1)
+    k = min(3, n_layers)
+    topk_indices = np.argsort(scores)[-k:]
+    fused_features = np.mean(layer_features[topk_indices], axis=0)
+
+    return fused_features
     # ------------------------------------------------------------------
 
 
@@ -86,8 +108,32 @@ def extract_geometric_features(
     # ------------------------------------------------------------------
 
     # Placeholder: returns an empty tensor (no geometric features).
-    return torch.zeros(0)
 
+    if hidden_states.ndim == 4:
+        hidden_states = hidden_states[0]  # (n_layers, seq_len, hidden_dim)
+    if attention_mask.ndim == 2:
+        attention_mask = attention_mask[0]  # -> (seq_len,)
+
+    n_layers, seq_len, hidden_dim = hidden_states.shape
+    assert attention_mask.shape == (seq_len,), f"attention_mask shape {attention_mask.shape} != (seq_len,)"
+
+    # Masked mean по токенам для каждого слоя
+    mask = attention_mask.to(hidden_states.device).float()  # (seq_len,)
+    mask_sum = mask.sum()
+    if mask_sum == 0.0:
+        mask_sum = 1.0
+
+    layer_norms = []
+    for l in range(n_layers):
+        h = hidden_states[l]  # (seq_len, hidden_dim)
+        h_masked = h * mask[:, None]  # (seq_len, hidden_dim)
+        mean_h = h_masked.sum(dim=0) / mask_sum  # (hidden_dim,)
+        norm = torch.norm(mean_h, p=2)
+        layer_norms.append(norm)
+
+    x = torch.stack(layer_norms, dim=0)  # (n_geometric_features,)
+
+    return x
 
 def aggregation_and_feature_extraction(
     hidden_states: torch.Tensor,
