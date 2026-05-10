@@ -208,7 +208,7 @@ if __name__=='__main__':
             feat = aggregation_and_feature_extraction(
                 hidden[i], mask[i], use_geometric=USE_GEOMETRIC,
             )
-            test_features.append(feat.cpu())
+            test_features.append(torch.from_numpy(feat).cpu())
 
     X_test = np.vstack([f.numpy() for f in test_features])  # (n_test, feature_dim)
 
