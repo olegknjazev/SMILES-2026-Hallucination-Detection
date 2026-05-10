@@ -149,7 +149,7 @@ if __name__=='__main__':
                 mask[i],     # (seq_len,)
                 use_geometric=USE_GEOMETRIC,
             )
-            all_features.append(feat.cpu())
+            all_features.append(torch.from_numpy(feat).cpu())
 
     extract_time = time.time() - t0
     print(f"Done in {extract_time:.1f} s  —  {len(all_features)} feature vectors extracted")
